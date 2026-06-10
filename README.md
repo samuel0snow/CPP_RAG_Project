@@ -1,41 +1,52 @@
 # MRAG — 基于 llama.cpp 的本地 RAG 小说问答系统
 
-## 这是什么东西
+# 项目介绍
 
-一个跑在本地的 RAG（检索增强生成）系统——说白了就是把一本小说喂给它，然后你可以用自然语言问问题，它去小说里找到相关内容后回答你。
+这是一个跑在本地的 RAG（检索增强生成）系统——把一本小说喂给它，然后使用自然语言问问题，本地模型会去小说里找到相关内容后回答你。
 
-不需要联网，不依赖 OpenAI API，模型全部跑在本地。
-
-## 目录结构
+# 目录结构
 
 ```
 大作业/
-├── config.json     ← 所有配置（模型路径、chunk 大小、采样参数等）
-├── CMakeLists.txt  ← CMake 构建脚本
-├── src/            ← 源代码（8 个模块，下面会逐个说明）
-├── data/           ← 放输入 TXT 和输出的 .db 文件
+├── config.json          ← 所有可调参数都在这一个文件里
+├── CMakeLists.txt       ← CMake 构建脚本
+├── download_models.py   ← 一键下载模型 + 四大名著 + llama.cpp 源码
+├── requirements.txt     ← Python 依赖（huggingface-hub）
+├── src/                 ← 所有源码
+│   ├── chunk.h / .cc            → Chunk 结构体 + 二进制读写
+│   ├── config.h / .cc           → 配置结构体 + JSON 解析
+│   ├── document.h / .cc         → 文档切分（章节识别、UTF-8 安全切割）
+│   ├── vectordatabase.h / .cc   → 向量存储 + 相似度检索 + 磁盘持久化
+│   ├── llamamodel.h / .cc       → llama.cpp 模型基类（RAII 封装）
+│   ├── embeddingengine.h / .cc  → 文本 → Embedding 向量
+│   ├── generationengine.h / .cc → RAG 提示词构造 + 流式生成
+│   └── main.cc                  → 入口：解析命令行、交互式模型切换、调度全流程
+├── patches/             ← 跨平台兼容补丁
+│   └── fs_path_shim.h   → 补全 std::filesystem::path 的 operator+（Linux 需要）
+├── data/                ← 输入数据和输出数据库
 │   ├── 三国演义.txt
 │   ├── 水浒传.txt
 │   ├── 红楼梦.txt
 │   └── 西游记.txt
-├── models/         ← 放 GGUF 模型文件
-│   ├── bge-small-zh-v1.5-f16.gguf           ← Embedding 模型
+├── models/
+│   ├── bge-small-zh-v1.5-f16.gguf          ← Embedding 模型
 │   ├── qwen2.5-1.5b-instruct-q4_k_m.gguf   ← 1.5B 生成模型（默认）
-│   └── qwen2.5-7b-instruct-q4_k_m.gguf     ← 7B 生成模型（可选）
-├── resources/      ← llama.cpp 源码（通过 CMake add_subdirectory 引入）
-└── build/          ← CMake 构建产物
+│   └── qwen2.5-7b-instruct-q4_k_m.gguf     ← 7B 生成模型（可选热切换）
+├── resources/
+│   └── llama.cpp-master/
+└── build/
 ```
 
 - **`data/`**：输入数据（TXT 小说文本）和建库产出的 `.db` 数据库文件都放这。建库时往这写，问答时从这读。当前放了四大名著作为测试数据。
-- **`models/`**：GGUF 模型文件。Embedding 模型固定一个，生成模型默认使用 1.5B；7B 作为高配可选模型保留在目录中，但是否能在运行时热切换成功取决于设备内存/显存余量。
-- **`resources/`**：第三方库源码。目前只有 llama.cpp，CMake 构建时直接把它当子目录拉进来一起编译，不需要额外装什么依赖。
+- **`models/`**：GGUF 模型文件。Embedding 模型固定是一个，生成模型默认使用 1.5B；7B 作为高配可选模型保留在目录中，但是否能在运行时热切换成功取决于设备内存/显存余量。
+- **`resources/`**：第三方库源码。目前只有 llama.cpp，CMake 构建时直接把它当子目录拉进来一起编译。
 
-## 环境要求
+# 环境要求
 
 - **系统**：Windows / Linux（两个平台都测过）
 - **编译器**：支持 C++17（MSVC 2019+ 或 GCC 9+ / Clang 10+）
 - **CMake**：3.16 或更高
-- **内存**：默认 1.5B 生成模型建议 8 GB 以上内存；7B 生成模型约 4~5 GB 文件体积，实际加载和切换会产生额外内存峰值，低内存设备上可能无法运行时切换。
+- **内存**：默认 1.5B 生成模型建议 8 GB 以上内存；7B 生成模型约 4\~5 GB 文件体积，实际加载和切换会产生额外内存峰值，低内存设备上可能无法运行时切换。
 
 > **Linux 编译注意**：llama.cpp 源码在 `common/common.cpp` 等文件中使用了 `fs_path + "string"` 写法，这是 MSVC/STL 的私有扩展（非 C++ 标准）。GCC 的 libstdc++ 严格遵循标准，会导致编译报错：
 >
@@ -45,7 +56,7 @@
 >
 > 项目已在 CMakeLists.txt 中配置了 `patches/fs_path_shim.h`，Linux 编译时会通过 `-include` 自动注入补全该缺失操作符，无需手动干预。
 
-## 模型下载
+# 模型下载
 
 需要三个 GGUF 格式的模型文件，都放到 `models/` 目录下：
 
@@ -65,17 +76,8 @@
 # 先装依赖
 pip install -r requirements.txt
 
-# 下载全部三个模型 + 四大名著 + llama.cpp 源码
+# 全部下载 三个模型 + 四大名著 + llama.cpp 源码
 python download_models.py
-
-# 只下载模型，不下载名著和源码
-python download_models.py --skip-novels --skip-llama
-
-# 只下载四大名著
-python download_models.py --novels-only
-
-# 只下载 Embedding + 1.5B（跳过 7B）
-python download_models.py --skip-7b
 ```
 
 ### 方式二：wget 直链下载
@@ -120,7 +122,7 @@ curl -L -o ./models/qwen2.5-1.5b-instruct-q4_k_m.gguf https://www.modelscope.cn/
 **Python 脚本**（上面 `python download_models.py` 默认就会一起下载）：
 
 ```bash
-python download_models.py                 # 模型 + 四大名著
+python download_models.py                 # 全部下载
 python download_models.py --novels-only   # 只下载四大名著
 ```
 
@@ -140,7 +142,7 @@ wget -P ./data/ https://raw.githubusercontent.com/tennessine/corpus/main/西游�
 **Python 脚本**（上面 `python download_models.py` 默认就会一起下载并解压）：
 
 ```bash
-python download_models.py                 # 全部下载（含 llama.cpp）
+python download_models.py                 # 全部下载
 python download_models.py --skip-llama    # 跳过 llama.cpp
 ```
 
@@ -151,7 +153,7 @@ wget -P ./resources/ https://github.com/ggerganov/llama.cpp/archive/refs/heads/m
 # 手动解压：将 master.zip 解压到 resources/，重命名为 llama.cpp-master
 ```
 
-## 编译
+# 编译
 
 ```bash
 mkdir build && cd build
@@ -162,25 +164,25 @@ cmake --build . --config Release  # Windows
 
 编译完会在 `build/` 下生成 `mrag.exe`（Windows）或 `mrag`（Linux）。
 
-## 使用方法
+# 使用方法
 
 ### 第一步：建库
 
-先把小说喂进去，生成向量数据库。以下命令全部在项目根目录（`大作业/`）下执行：
+先把小说喂进去，生成向量数据库。以下命令全部在**项目根目录**下执行：
 
 ```bash
 # 单本逐条添加（推荐）
+cd ..
 ./build/mrag --ingest ./data/三国演义.txt ./data/sanguo.db
 ./build/mrag --ingest ./data/水浒传.txt ./data/shuihu.db
 ./build/mrag --ingest ./data/西游记.txt ./data/xiyou.db
 ./build/mrag --ingest ./data/红楼梦.txt ./data/honglou.db
 
-# 多文档一次性建库（可用于加分项测试；搜索范围更大，检索噪声也会变多）
+# 多文档一次性建库（搜索范围更大，但是搜索准度下降）
+cd ..
 ./build/mrag --ingest ./data/三国演义.txt ./data/水浒传.txt ./data/西游记.txt ./data/红楼梦.txt ./data/four_classics.db
 
 ```
-
-多个 TXT 的最后一个参数是输出 `.db` 路径，前面全是输入 TXT。
 
 这个过程会：
 
@@ -210,11 +212,13 @@ cmake --build . --config Release  # Windows
 ./build/mrag --chat ./data/shuihu.db
 ./build/mrag --chat ./data/xiyou.db
 ./build/mrag --chat ./data/honglou.db
+
+#全 .txt 问答
 # ./build/mrag --chat ./data/four_classics.db
 ```
 
 然后就可以输入问题了：
-（执行 `./build/mrag --chat ./data/sanguo.db` 之后）
+（例如执行 `./build/mrag --chat ./data/sanguo.db` 之后）
 
 ```
 > 刘备的字是什么？
@@ -223,7 +227,7 @@ cmake --build . --config Release  # Windows
   [2] 第一回: 玄德曰："我本汉室宗亲，姓刘，名备，字玄德...
   [3] 第二回: ...
 
-根据参考上下文，刘备字玄德，是中山靖王刘胜之后...
+根据参考上下文，刘备字玄德...
 ```
 
 交互模式支持两个控制命令：
@@ -249,9 +253,11 @@ cmake --build . --config Release  # Windows
 请选择生成模型编号（回车跳过不改）:
 ```
 
-输入编号可以尝试切换生成模型，回车则保持当前模型不变。Embedding 模型和已建好的数据库向量维度绑定，交互式 `/reload` 默认不切换 Embedding。
+输入编号可以尝试切换生成模型，回车则保持当前模型不变。
 
-注意：7B 模型能否运行时切换成功与设备内存/显存有关。它的文件约 4~5 GB，加载时还会有额外上下文和临时内存开销；如果机器资源不足，应继续使用默认 1.5B。项目设计上把 1.5B 作为稳定默认路径，把 7B 作为高配机器上的可选测试项。
+Embedding 模型和已建好的数据库向量维度绑定，交互式 `/reload` 默认不切换 Embedding。
+
+**注意**：7B 模型能否运行时切换成功与设备内存/显存有关。它的文件约 4\~5 GB，加载时还会有额外上下文和临时内存开销；如果机器资源不足，应继续使用默认 1.5B。项目设计上把 1.5B 作为稳定默认路径，把 7B 作为高配机器上的可选测试项。
 
 ### 单次查询
 
@@ -261,7 +267,7 @@ cmake --build . --config Release  # Windows
 ./build/mrag --query ./data/sanguo.db "关羽的武器是什么？"
 ```
 
-## 配置文件说明
+# 配置文件说明
 
 `config.json` 里的可以调的参数：
 
@@ -296,7 +302,7 @@ cmake --build . --config Release  # Windows
 }
 ```
 
-大部分参数保持默认就行。几个想调的可能：
+大部分参数保持默认就行。有几个想调的可能列出在下：
 
 - **`chunk_size`**：切多长的文本块，当前默认 650 字节。调小一点检索更精确但 Chunk 数量会变多，调太大则容易引入噪声。
 - **`overlap_size`**：相邻 Chunk 重叠多少，当前默认 100 字节。保证不会因为切割把一句话劈成两半。
@@ -304,7 +310,7 @@ cmake --build . --config Release  # Windows
 - **`temperature`**：生成随机性。0 最确定，1 比较放飞，默认 0.7。
 - **`n_gpu_layers`**：GPU 加速层数。有 NVIDIA 显卡就设大一点（比如 99），只用 CPU 就设 0。
 
-## 已知问题
+# 已知问题
 
 1. 模型只支持 GGUF 格式，其他格式不行。
 2. 输入文件只支持 UTF-8 编码的纯文本 TXT。
@@ -312,11 +318,11 @@ cmake --build . --config Release  # Windows
 4. 如果 prompt 太长超出模型上下文窗口（比如检索片段太多），会跳过本次推理不做回答。
 5. 热切换到不同维度的 Embedding 模型时，旧数据库向量可能无法匹配，需要重新 `--ingest` 建库。
 
-## 修改记录
+# 修改记录
 
 ### 混合检索（2026-05-27）
 
-原版纯向量检索返回的 chunk 全部来自无关章节，相似度仅 \~0.49（近乎随机）。已加入**关键词+向量混合检索**：
+原版纯向量检索返回的 chunk 全部来自无关章节，相似度近乎随机。已加入**关键词+向量混合检索**：
 
 - **关键词评分**：去掉停用词（"的是在了"等），计算"内容字符密度"（density² × 0.6 + bigram × 0.4）
 - **混合公式**：基础分为 `0.45 × cosSimilarity + 0.55 × keywordScore`，短事实题会额外加入主语/属性证据加权
@@ -324,10 +330,10 @@ cmake --build . --config Release  # Windows
 
 **效果对比**：
 
-| 查询      | 修复前检索结果      | 修复后检索结果             |
-| ------- | ------------ | ------------------- |
-| 桃园结义在哪  | 第32/23/20回 ❌ | 第5/29/**1回** ✅ 章节对了 |
-| 十常侍是哪些人 | 第32/??/20回 ❌ | **第2/2/1回** ✅ 命中相关章 |
+| 查询      | 修复前检索结果     | 修复后检索结果           |
+| ------- | ----------- | ----------------- |
+| 桃园结义在哪  | 第32/23/20回  | 第5/29/**1回** 章节对了 |
+| 十常侍是哪些人 | 第32/??/20回  | **第2/2/1回** 命中相关章 |
 
 - 检索到了**正确章节**，但 LLM 因上下文不够完整仍出现幻觉
 - 例如：桃园结义→答"平原县"（正确是"桃园"）；十常侍→答"窦武、陈蕃…"（全是编造的）
@@ -366,7 +372,7 @@ cmake --build . --config Release  # Windows
 
 原来的模型下载依赖用户自己去网页找链接，现在提供四种方式：
 
-- **Python 脚本**（推荐）：项目自带了 `download_models.py`，用 `huggingface_hub` 官方接口下载全部三个模型，支持断点续传、支持 `--skip-7b` / `--skip-novels` / `--novels-only` 等选项。同时支持从 [tennessine/corpus](https://github.com/tennessine/corpus) 下载四大名著 TXT、从 [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp) 下载并自动解压 llama.cpp 源码
+- **Python 脚本**：项目自带了 `download_models.py`，用 `huggingface_hub` 官方接口下载全部三个模型，支持断点续传、支持 `--skip-7b` / `--skip-novels` / `--novels-only` 等选项。同时支持从 [tennessine/corpus](https://github.com/tennessine/corpus) 下载四大名著 TXT、从 [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp) 下载并自动解压 llama.cpp 源码
 - **wget**：模型用 HuggingFace 直链、四大名著用 raw\.githubusercontent.com 直链、llama.cpp 用 GitHub archive 直链，不需要登录
 - **curl**：Windows 用户没有 wget 时的替代方案
 - **手动浏览器**：保留原有方式，适合网络受限的环境
@@ -431,4 +437,4 @@ llama.cpp 源码中存在跨平台兼容性 bug —— `common/common.cpp` 等�
 - 对“字/名/姓/号/武器”等属性词增加证据加权，让含有明确原文模式的片段更容易进 top-K
 - Prompt 改为保守回答：上下文没有直接证据、人物不匹配或只是相似名字时，必须回答“根据当前片段无法得到答案”，避免继续编造
 
-这个修改的目标是提升检索和拒答质量，而不是保证每个问题都能被当前 top-K 命中。像 `data/king3_aswer.md` 中的总结类、跨章节类问题仍然属于 RAG 的弱项，适合回答“部分可回答”或给出有限证据。
+这个修改的目标是提升检索和拒答质量，而不是保证每个问题都能被命中。总结类、跨章节类问题仍然属于 RAG 的弱项。
