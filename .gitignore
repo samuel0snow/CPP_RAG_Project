@@ -1,32 +1,41 @@
-# Prerequisites
-*.d
+# Build outputs
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.ninja
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
+# Local binaries and object files
+*.exe
+*.dll
 *.so
 *.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
 *.a
 *.lib
+*.o
+*.obj
+*.pdb
+*.ilk
 
-# Executables
-*.exe
-*.out
-*.app
+# Large model files
+models/
+*.gguf
+
+# Downloaded third-party source
+resources/
+
+# Generated vector databases
+data/*.db
+
+# Local caches and editor settings
+.cache/
+.ccache/
+.vscode/
+.vs/
+
+# OS noise
+Thumbs.db
+Desktop.ini
+.DS_Store
