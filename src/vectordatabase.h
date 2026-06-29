@@ -27,6 +27,7 @@ public:
 
     size_t size() const { return chunks_.size(); }
     const std::vector<Chunk> &chunks() const { return chunks_; }
+    std::vector<Chunk> &mutableChunks() { return chunks_; }
 
 private:
     std::vector<Chunk> chunks_;

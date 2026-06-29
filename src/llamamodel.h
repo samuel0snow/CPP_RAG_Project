@@ -11,7 +11,7 @@ enum class ModelMode { Embedding, Generation };
 
 class LlamaModelBase {
 public:
-    // 加载 GGUF 模型 → 创建推理上下文 → 获取 vocab，失败抛 runtime_error
+    // 加载 GGUF 模型,创建推理上下文,获取 vocab，失败抛 runtime_error
     LlamaModelBase(const std::string &modelPath, ModelMode mode,
                    const AppConfig::GenerationConfig &genCfg,
                    const AppConfig::EmbeddingConfig &embCfg,

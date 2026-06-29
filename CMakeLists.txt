@@ -14,6 +14,7 @@ add_subdirectory(resources/llama.cpp-master)
 
 add_executable(mrag
     src/main.cc
+    src/mragapp.cc
     src/config.cc
     src/chunk.cc
     src/document.cc

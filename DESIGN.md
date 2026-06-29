@@ -6,7 +6,7 @@
 大作业/
 ├── config.json          ← 所有可调参数都在这一个文件里
 ├── CMakeLists.txt       ← CMake 构建脚本
-├── download_models.py   ← 一键下载模型 + 四大名著 + llama.cpp 源码
+├── download.py   ← 一键下载模型 + 四大名著 + llama.cpp 源码
 ├── requirements.txt     ← Python 依赖（huggingface-hub）
 ├── src/                 ← 所有源码
 │   ├── chunk.h / .cc            → Chunk 结构体 + 二进制读写
@@ -16,7 +16,8 @@
 │   ├── llamamodel.h / .cc       → llama.cpp 模型基类（RAII 封装）
 │   ├── embeddingengine.h / .cc  → 文本 → Embedding 向量
 │   ├── generationengine.h / .cc → RAG 提示词构造 + 流式生成
-│   └── main.cc                  → 入口：解析命令行、交互式模型切换、调度全流程
+│   ├── mragapp.h / .cc          → 应用层：命令行、建库、问答、模型切换
+│   └── main.cc                  → 最小入口，调用 runMragApp()
 ├── patches/             ← 跨平台兼容补丁
 │   └── fs_path_shim.h   → 补全 std::filesystem::path 的 operator+（Linux 需要）
 ├── data/                ← 输入数据和输出数据库
@@ -27,7 +28,9 @@
 ├── models/
 │   ├── bge-small-zh-v1.5-f16.gguf          ← Embedding 模型
 │   ├── qwen2.5-1.5b-instruct-q4_k_m.gguf   ← 1.5B 生成模型（默认）
-│   └── qwen2.5-7b-instruct-q4_k_m.gguf     ← 7B 生成模型（可选热切换）
+│   ├── qwen2.5-7b-instruct-q4_k_m.gguf     ← 可选生成模型
+│   ├── bge-m3-q4_k_m.gguf                  ← 可选 Embedding 模型
+│   └── OpenAI-...-IQ1_M.gguf                ← 可选 20B 量化生成模型
 ├── resources/
 │   └── llama.cpp-master/
 └── build/
@@ -35,9 +38,9 @@
 
 几个目录的简单定位：
 
-- **`data/`**：放输入文件（小说 TXT）和输出的数据库文件（.db）。建库产出的二进制数据库就落在这里，问答模式也从这里加载。目前放了四大名著作为测试数据。小说来源 [tennessine/corpus](https://github.com/tennessine/corpus)，也可以通过 `python download_models.py` 自动下载。
-- **`models/`**：放 GGUF 模型文件。Embedding 模型固定一个（bge-small-zh-v1.5），生成模型默认使用 1.5B。7B 作为高配可选模型保留，用于内存/显存充足的设备测试效果上限；是否能运行时切换成功取决于设备资源，不作为默认验收路径。
-- **`resources/`**：放第三方库的源码，目前只有 llama.cpp。CMakeLists.txt 里通过 `add_subdirectory` 把它拉进来一起编译，不用单独装任何东西。也可以 `python download_models.py` 自动下载并解压到该目录。
+- **`data/`**：放输入文件（小说 TXT）和输出的数据库文件（.db）。建库产出的二进制数据库就落在这里，问答模式也从这里加载。目前放了四大名著作为测试数据。小说来源 [tennessine/corpus](https://github.com/tennessine/corpus)，也可以通过 `python download.py` 自动下载。
+- **`models/`**：放 GGUF 模型文件。生成模型和 Embedding 模型都可在聊天模式中切换，默认仍使用 bge-small-zh-v1.5 与 Qwen2.5-1.5B。
+- **`resources/`**：放第三方库的源码，目前只有 llama.cpp。CMakeLists.txt 里通过 `add_subdirectory` 把它拉进来一起编译，不用单独装任何东西。也可以 `python download.py` 自动下载并解压到该目录。
 - **`patches/`**：跨平台兼容性补丁。`fs_path_shim.h` 补全了 MSVC 私有的 `operator+(fs::path, fs::path)`，让 llama.cpp 在 Linux/GCC 上也能编译通过。CMakeLists.txt 在非 MSVC 环境下自动通过 `-include` 注入。
 
 ***
@@ -52,7 +55,7 @@
 
 因此设计上不把 7B 作为默认启动模型，也**不把 7B 热切换成功视为低配设备上的必然能力**。
 
-`/reload` 的定位是“运行时模型路径切换能力演示”：程序扫描 `models/` 下的生成模型候选，用户按编号选择。Embedding 模型默认不在交互式 `/reload` 中切换，因为数据库里的向量维度和 Embedding 模型绑定；随意切换 Embedding 会导致旧库不可用，通常需要重新 `--ingest` 建库。
+`/reload` 会分别显示生成模型和 Embedding 模型。切换 Embedding 后必须重新计算当前数据库的全部向量，否则新旧向量即使维度相同也不属于同一语义空间。程序先完成重建，再替换旧引擎和旧向量。
 
 ***
 
@@ -62,7 +65,7 @@
 
 **离线建库（--ingest）**：把一本或多本小说的 TXT 文件依次读进来 → 每本按章节切成 Chunk，合并到一起 → 每个 Chunk 用 Embedding 模型转成向量 → 全部存入同一个向量数据库 → 落盘成一个 .db 文件。最后一个命令行参数是输出 .db 路径，前面所有参数都是输入 TXT。
 
-**在线问答（--chat）**：加载之前建好的 .db → 用户输入问题 → 把问题也转成 Embedding → 在数据库里搜出最相关的几个 Chunk → 把这些 Chunk 塞进提示词 → 喂给生成模型 → 流式输出回答。默认使用 1.5B 生成模型。运行期间支持 `/reload` 扫描 `models/` 目录并按编号选择生成模型，但 7B 切换是否成功受设备资源约束。也支持 `/exit` 退出。
+**在线问答（--chat）**：加载之前建好的 .db → 用户输入问题 → 生成查询向量 → 检索相关 Chunk → 交给生成模型回答。运行期间支持 `/reload` 分别切换生成模型和 Embedding 模型，也支持 `/exit`。
 
 ***
 
@@ -127,6 +130,8 @@ struct Chunk {
 
 **检索**：`search()` 接收一个 query 的 Embedding 向量 + 原始 query 文本，返回 top-K 个相似 Chunk。基础分数是 `0.45 × 余弦相似度 + 0.55 × 关键词分数`。此外，针对“是什么/是谁/哪里/多少”等短事实题，会额外提取主语并检查“字/名/姓/号/武器”等属性证据，含明确证据的片段加权，不含主语证据的片段降权。
 
+当前版本进一步加入实体别名归一、多实体共现和题型证据加权。评分时会查看同章节前后相邻 Chunk，返回时也拼接相邻文本，避免人物名与答案被切在两个片段中。
+
 实现上要求用 `priority_queue`（最小堆）而不是全排序。每次新算出一个分数就塞进堆里，大于堆顶就替换，复杂度是 O(n log k) 而不是 O(n log n)。
 
 **持久化**：文件格式是：Magic Number（4 bytes，我用了 `0x4D524147`）→ Version（4 bytes）→ Chunk Count（8 bytes）→ 一个接一个的 Chunk 序列化数据。加载时先校验魔数和版本，不匹配就拒绝加载。
@@ -173,16 +178,16 @@ struct Chunk {
 
 **自回归生成**：初始化采样器链——顺序是 top\_k → top\_p → temperature → dist（老师要求这个顺序不能改）。然后进入循环：每次 `llama_sampler_sample()` 采一个 token → `llama_vocab_is_eog()` 判断是不是结束符 → 解码成字符输出 → 构造单个 token 的 batch → `llama_decode()` → 继续循环。最多生成 `max_output_tokens` 个 token。
 
-### 第八阶段：main.cc
+### 第八阶段：mragapp 与 main
 
-入口文件，最后才写。做的事情比之前多了不少：
+`mragapp.h/.cc` 负责应用流程，`main.cc` 只保留标准入口并调用 `runMragApp()`。这样满足最终提交对两个 mragapp 文件的要求，也让入口和业务流程分离。
 
 `BackendGuard` 是最外层的一个 RAII 结构体，构造时调 `llama_backend_init()`，析构时调 `llama_backend_free()`。放在 `main()` 的最开始，保证整个程序运行期间 backend 都是初始化好的。
 
 三种用户运行模式：
 
 - `--ingest <txt1> <txt2> ... <db路径>`：支持传入任意多个 TXT 文件，最后一个参数是输出 .db 路径。`buildKnowledgeBase()` 会依次对每个文档调用 `processNovel()`，把所有 Chunk 合并后统一生成 Embedding、存入数据库。比如一次性喂四大名著，四个 TXT 的 chunk 全写进同一个 four\_classics.db。
-- `--chat <db路径>`：调用 `chatLoop()`，加载数据库 → 循环问答。在循环内部，用户可以输入 `/reload` 交互式选择生成模型。默认稳定路径仍是 1.5B，7B 是否能切换成功取决于设备资源。
+- `--chat <db路径>`：调用 `chatLoop()`，加载数据库并循环问答。`/reload` 可分别选择生成模型和 Embedding 模型。
 - `--query <db路径> "问题"`：单次问答模式，不走交互循环，适合脚本调用或快速测试。
 
 #### 交互式 /reload 选模型的实现细节
@@ -191,10 +196,10 @@ struct Chunk {
 
 1. **`interactiveReload()`**：函数入口，负责整个交互流程：
    - 用平台原生 API 扫描 `./models/` 目录（Windows：`FindFirstFileA`/`FindNextFileA`；Linux：`opendir`/`readdir`），收集所有 `.gguf` 文件名
-   - 按文件名过滤出生成模型候选，避免把 bge Embedding 模型误选为生成模型
-   - 显示带编号的生成模型菜单列表
-   - 提示用户输入生成模型编号 → `std::stoul` 解析、校验范围
-   - Embedding 模型默认不参与交互式切换，因为它和已建数据库中的向量维度绑定
+   - 文件名包含 `bge` 或 `embed` 的归入 Embedding 候选，其余归入生成模型候选
+   - 分别显示生成模型和 Embedding 模型菜单
+   - 生成模型用 `--probe-gen` 探测，Embedding 模型用 `--probe-emb` 探测并生成测试向量
+   - Embedding 切换时重建当前数据库全部向量，完成后再替换旧引擎
    - 根据用户选择更新当前 `AppConfig`，并写回 `config.json`
 2. **默认 1.5B，7B 受资源约束**：
    - `config.json` 默认固定使用 1.5B，保证普通设备和课程验收路径稳定
@@ -238,8 +243,7 @@ error: no match for 'operator+' (operand types are 'std::filesystem::path' and '
 3. 章节识别正则只覆盖了中文"第X章/Y回/Z卷"和英文"Chapter N"两种模式，其他格式（比如日文"第X話"）可能识别失败。
 4. Prompt 超过上下文窗口的时候直接跳过不做回答，不会做截断或压缩处理。
 5. 内存占用跟模型大小正相关，没有做量化之外的额外优化。
-6. 交互式 `/reload` 默认不切换 Embedding 模型；如果外部修改配置切换了 Embedding 模型，新旧模型维度或语义空间可能不一致，旧数据库需要重新 `--ingest` 建库。
+6. Embedding 热切换后的向量只保存在当前进程内存中；若要永久写入 `.db`，仍需重新执行 `--ingest`。
 7. 多文档建库时 Chunk ID 是全局递增的，不会区分来自哪本书——metadata 里只存了章节名，如果想区分来自哪本书需要改 DocumentProcessor 在 metadata 里加上书名。
 8. llama.cpp 源码依赖 MSVC 私有的 `operator+` 扩展，Linux 编译需要通过 `patches/fs_path_shim.h` 打补丁。这个 bug 的根因在 llama.cpp upstream，补丁只是临时方案。
 9. MinGW 对 `std::filesystem` 的链接支持不完整（`codecvt` 等符号缺失），所以 `/reload` 的目录扫描用了平台原生 API 而非标准库。
-

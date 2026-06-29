@@ -4,7 +4,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -211,39 +210,60 @@ AppConfig loadConfig(const std::string &configPath) {
 
 // 将当前运行配置写回 config.json，供热切换后的下轮检测保持一致
 bool saveConfig(const std::string &configPath, const AppConfig &config) {
-    std::ofstream out(configPath);
-    if (!out) {
+    FILE *fp = fopen(configPath.c_str(), "w");
+    if (!fp) {
         std::cerr << "[ERROR] 无法写入配置文件: " << configPath << std::endl;
         return false;
     }
 
-    out << "{\n";
-    out << "    \"model\": {\n";
-    out << "        \"embedding\": \"" << config.model.emb_model_path << "\",\n";
-    out << "        \"generation\": \"" << config.model.gen_model_path << "\",\n";
-    out << "        \"n_gpu_layers\": " << config.model.n_gpu_layers << "\n";
-    out << "    },\n";
-    out << "    \"document\": {\n";
-    out << "        \"chunk_size\": " << config.document.chunk_size << ",\n";
-    out << "        \"overlap_size\": " << config.document.overlap_size << "\n";
-    out << "    },\n";
-    out << "    \"retrieval\": {\n";
-    out << "        \"top_k\": " << config.retrieval.top_k << "\n";
-    out << "    },\n";
-    out << "    \"generation\": {\n";
-    out << "        \"n_ctx\": " << config.generation.n_ctx << ",\n";
-    out << "        \"n_batch\": " << config.generation.n_batch << ",\n";
-    out << "        \"n_ubatch\": " << config.generation.n_ubatch << ",\n";
-    out << "        \"max_output_tokens\": " << config.generation.max_output_tokens << ",\n";
-    out << "        \"temperature\": " << config.generation.temperature << ",\n";
-    out << "        \"top_k\": " << config.generation.top_k << ",\n";
-    out << "        \"top_p\": " << config.generation.top_p << "\n";
-    out << "    },\n";
-    out << "    \"embedding\": {\n";
-    out << "        \"n_ctx\": " << config.embedding.n_ctx << ",\n";
-    out << "        \"n_batch\": " << config.embedding.n_batch << ",\n";
-    out << "        \"n_ubatch\": " << config.embedding.n_ubatch << "\n";
-    out << "    }\n";
-    out << "}\n";
-    return true;
+    int written = std::fprintf(
+        fp,
+        "{\n"
+        "    \"model\": {\n"
+        "        \"embedding\": \"%s\",\n"
+        "        \"generation\": \"%s\",\n"
+        "        \"n_gpu_layers\": %d\n"
+        "    },\n"
+        "    \"document\": {\n"
+        "        \"chunk_size\": %zu,\n"
+        "        \"overlap_size\": %zu\n"
+        "    },\n"
+        "    \"retrieval\": {\n"
+        "        \"top_k\": %d\n"
+        "    },\n"
+        "    \"generation\": {\n"
+        "        \"n_ctx\": %d,\n"
+        "        \"n_batch\": %d,\n"
+        "        \"n_ubatch\": %d,\n"
+        "        \"max_output_tokens\": %d,\n"
+        "        \"temperature\": %.6g,\n"
+        "        \"top_k\": %d,\n"
+        "        \"top_p\": %.6g\n"
+        "    },\n"
+        "    \"embedding\": {\n"
+        "        \"n_ctx\": %d,\n"
+        "        \"n_batch\": %d,\n"
+        "        \"n_ubatch\": %d\n"
+        "    }\n"
+        "}\n",
+        config.model.emb_model_path.c_str(),
+        config.model.gen_model_path.c_str(),
+        config.model.n_gpu_layers,
+        config.document.chunk_size,
+        config.document.overlap_size,
+        config.retrieval.top_k,
+        config.generation.n_ctx,
+        config.generation.n_batch,
+        config.generation.n_ubatch,
+        config.generation.max_output_tokens,
+        config.generation.temperature,
+        config.generation.top_k,
+        config.generation.top_p,
+        config.embedding.n_ctx,
+        config.embedding.n_batch,
+        config.embedding.n_ubatch);
+
+    bool ok = written > 0 && ferror(fp) == 0;
+    fclose(fp);
+    return ok;
 }

@@ -7,6 +7,14 @@
 #include <algorithm>
 #include <cassert>
 
+static std::string sourceNameFromPath(const std::string &filepath) {
+    size_t begin = filepath.find_last_of("/\\");
+    begin = (begin == std::string::npos) ? 0 : begin + 1;
+    size_t end = filepath.find_last_of('.');
+    if (end == std::string::npos || end < begin) end = filepath.size();
+    return filepath.substr(begin, end - begin);
+}
+
 DocumentProcessor::DocumentProcessor(const AppConfig::DocumentConfig &docConfig)
     : chunkSize_(docConfig.chunk_size),
       overlapSize_(docConfig.overlap_size) {}
@@ -15,10 +23,7 @@ size_t DocumentProcessor::nextUtf8Boundary(const std::string &text, size_t pos) 
     assert(pos <= text.size());
     while (pos < text.size()) {
         unsigned char c = static_cast<unsigned char>(text[pos]);
-        if ((c & 0x80u) == 0u) return pos;
-        if ((c & 0xE0u) == 0xC0u) { ++pos; return (pos < text.size()) ? pos + 1 : text.size(); }
-        if ((c & 0xF0u) == 0xE0u) { pos += 2; return (pos < text.size()) ? pos + 1 : text.size(); }
-        if ((c & 0xF8u) == 0xF0u) { pos += 3; return (pos < text.size()) ? pos + 1 : text.size(); }
+        if ((c & 0xC0u) != 0x80u) return pos;
         ++pos;
     }
     return text.size();
@@ -51,7 +56,7 @@ size_t DocumentProcessor::findCutPoint(const std::string &text, size_t targetPos
     size_t searchStart = (targetPos > overlapSize_) ? (targetPos - overlapSize_) : 0;
     for (size_t i = targetPos; i > searchStart && i > 0; --i) {
         if (text[i] == '\n') return i;
-        if (isChinesePunctuation(text, i)) return nextUtf8Boundary(text, i + 3);
+        if (isChinesePunctuation(text, i)) return i + 3;
     }
     return nextUtf8Boundary(text, targetPos);
 }
@@ -69,7 +74,8 @@ std::vector<Chunk> DocumentProcessor::processNovel(const std::string &filepath) 
     }
 
     std::string fullText;
-    std::string currentChapter = "正文";
+    const std::string sourceName = sourceNameFromPath(filepath);
+    std::string currentChapter = sourceName + " / 正文";
     char lineBuf[65536];
 
     while (fgets(lineBuf, sizeof(lineBuf), fp)) {
@@ -99,7 +105,7 @@ std::vector<Chunk> DocumentProcessor::processNovel(const std::string &filepath) 
             };
             splitChunks();
             fullText.clear();
-            currentChapter = trimmed;
+            currentChapter = sourceName + " / " + trimmed;
             fullText += line + "\n";
         } else {
             fullText += line + "\n";
